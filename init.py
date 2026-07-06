@@ -1,4 +1,4 @@
-import sys, os, time, threading, queue, subprocess, tempfile, ctypes, random
+import sys, os, time, threading, queue, subprocess, tempfile, ctypes, random, webbrowser, json, tkinter as tk
 from pathlib import Path
 
 # Проверка ОС
@@ -18,11 +18,40 @@ import customtkinter as ctk
 from customtkinter import CTk, CTkFrame, CTkLabel, CTkButton, CTkProgressBar, CTkTextbox, CTkScrollableFrame, CTkTabview
 import psutil
 
+# -------------------- Конфиг --------------------
+CONFIG_FILE = Path(sys.argv[0]).parent / "config.json"
+
+DEFAULT_CONFIG = {
+    "theme": "dark",
+    "autostart": False,
+    "update_interval": 2500,
+    "start_minimized": False,
+    "animations": True
+}
+
+def load_config():
+    if CONFIG_FILE.exists():
+        try:
+            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                cfg = json.load(f)
+                for k, v in DEFAULT_CONFIG.items():
+                    if k not in cfg:
+                        cfg[k] = v
+                return cfg
+        except:
+            pass
+    return DEFAULT_CONFIG.copy()
+
+def save_config(cfg):
+    with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+        json.dump(cfg, f, indent=4)
+
+# -------------------- Права администратора --------------------
 def is_admin():
     try: return ctypes.windll.shell32.IsUserAnAdmin()
     except: return False
 
-# Импорт доп. библиотек
+# -------------------- Импорт доп. библиотек --------------------
 wmi_available = False
 try:
     import wmi
@@ -45,6 +74,13 @@ try:
     import send2trash
     send2trash_available = True
 except: pass
+
+# pygame для музыки
+try:
+    import pygame
+    pygame_available = True
+except:
+    pygame_available = False
 
 # -------------------- Сбор данных --------------------
 def get_cpu_info():
@@ -181,7 +217,7 @@ def run_diagnostics():
 
 # -------------------- Расширенная оптимизация --------------------
 def optimize_step(progress, log, admin):
-    total = 27 if admin else 16   # увеличим из-за новых шагов
+    total = 27 if admin else 16
     cur = 0
     def update(msg):
         nonlocal cur
@@ -193,7 +229,6 @@ def optimize_step(progress, log, admin):
         update("[*] Сканирование системы...")
         time.sleep(0.3)
 
-        # Базовая очистка
         update("[+] Очистка временных файлов пользователя")
         tmp = Path(os.environ.get('TEMP', tempfile.gettempdir()))
         cnt = 0
@@ -259,7 +294,6 @@ def optimize_step(progress, log, admin):
             update("[!] Оптимизация завершена (часть шагов пропущена без прав администратора)")
             return
 
-        # ---------- Шаги для администратора ----------
         update("[+] Очистка Prefetch")
         try:
             prefetch = Path(os.environ['SystemRoot'])/'Prefetch'
@@ -307,10 +341,9 @@ def optimize_step(progress, log, admin):
         subprocess.run('fsutil behavior set DisableDeleteNotify 0', shell=True, capture_output=True)
         for p in psutil.disk_partitions():
             if 'fixed' in p.opts:
-                subprocess.run(f'defrag {p.device} /L', shell=True, capture_output=True)  # только TRIM, без обычной дефрагментации
+                subprocess.run(f'defrag {p.device} /L', shell=True, capture_output=True)
         log("  └ TRIM выполнен для всех SSD (дефрагментация HDD пропущена для скорости)")
 
-        # ------ ИГРОВАЯ ОПТИМИЗАЦИЯ ------
         update("[*] Включение игрового режима (Game Mode)")
         subprocess.run('reg add "HKCU\\Software\\Microsoft\\GameBar" /v AllowAutoGameMode /t REG_DWORD /d 1 /f', shell=True, capture_output=True)
         subprocess.run('reg add "HKCU\\Software\\Microsoft\\GameBar" /v AutoGameModeEnabled /t REG_DWORD /d 1 /f', shell=True, capture_output=True)
@@ -349,13 +382,11 @@ def optimize_step(progress, log, admin):
             log("  └ Приоритеты процессов повышены")
         except: log("  └ Ошибка изменения приоритетов")
 
-        # ------ ОПТИМИЗАЦИЯ ПОД КОНКРЕТНУЮ ОС ------
         if IS_WIN11:
             update("[*] Windows 11: Отключение виджетов и новостей")
             subprocess.run('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Feeds" /v ShellFeedsTaskbarViewMode /t REG_DWORD /d 2 /f', shell=True, capture_output=True)
             subprocess.run('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Widgets" /v EnableAppNotification /t REG_DWORD /d 0 /f', shell=True, capture_output=True)
             log("  └ Виджеты и новости отключены")
-
             update("[*] Windows 11: Отключение Copilot (если есть)")
             subprocess.run('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Copilot" /v IsCopilotAvailable /t REG_DWORD /d 0 /f', shell=True, capture_output=True)
             log("  └ Copilot отключён")
@@ -363,7 +394,6 @@ def optimize_step(progress, log, admin):
             update("[*] Windows 10: Отключение Cortana")
             subprocess.run('reg add "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\Windows Search" /v AllowCortana /t REG_DWORD /d 0 /f', shell=True, capture_output=True)
             log("  └ Cortana отключена")
-
             update("[*] Windows 10: Отключение рекламы на экране блокировки и в меню Пуск")
             subprocess.run('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager" /v RotatingLockScreenEnabled /t REG_DWORD /d 0 /f', shell=True, capture_output=True)
             subprocess.run('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager" /v SystemPaneSuggestionsEnabled /t REG_DWORD /d 0 /f', shell=True, capture_output=True)
@@ -390,9 +420,9 @@ class Splash(ctk.CTkToplevel):
         self.overrideredirect(True)
         self.geometry(f"500x300+{self.winfo_screenwidth()//2-250}+{self.winfo_screenheight()//2-150}")
         self.attributes("-alpha", 0.0)
-        self.configure(fg_color="#0d1117")
+        self.configure(fg_color=("#f0f0f0", "#0d1117"))
         ctk.CTkLabel(self, text="⚡ SYSTEM OPTIMIZER", font=("Segoe UI", 28, "bold"), text_color="#58a6ff").pack(pady=40)
-        ctk.CTkLabel(self, text="Загрузка...", font=("Segoe UI", 14), text_color="#c9d1d9").pack()
+        ctk.CTkLabel(self, text="Загрузка...", font=("Segoe UI", 14), text_color=("#000000", "#c9d1d9")).pack()
         self.progress = ctk.CTkProgressBar(self, width=300)
         self.progress.pack(pady=30)
         self.progress.set(0)
@@ -413,30 +443,207 @@ class Splash(ctk.CTkToplevel):
             self.master.deiconify()
             self.destroy()
 
+# -------------------- Ритм-игра --------------------
+class RhythmGame(ctk.CTkToplevel):
+    def __init__(self, master):
+        super().__init__(master)
+        self.title("🎵 Ритм-игра")
+        self.geometry("800x600")
+        self.resizable(False, False)
+        self.configure(fg_color=("#f0f0f0", "#1e1e2e"))
+
+        self.score = 0
+        self.combo = 0
+        self.missed = 0
+        self.notes = []
+        self.note_data = []
+        self.lanes = 3
+        self.lane_width = 100
+        self.start_x = 150
+        self.bpm = 153  # можно изменить для синхронизации с музыкой
+        self.spawn_delay = 1000
+        self.note_speed = 6
+        self.game_active = False
+
+        # Инициализация pygame для музыки
+        if pygame_available:
+            pygame.mixer.init()
+            self.music_file = "song.ogg"  # ваш файл должен лежать рядом с init.py
+        else:
+            self.music_file = None
+
+        ctk.CTkLabel(self, text="🎤 Ритм-игра", font=("Segoe UI", 24, "bold"), text_color=("#000000", "#cba6f7")).pack(pady=10)
+
+        # Цвет холста зависит от темы
+        theme = ctk.get_appearance_mode()
+        bg_color = "#ffffff" if theme == "light" else "#313244"
+        self.canvas = tk.Canvas(self, width=600, height=250, bg=bg_color, highlightthickness=0)
+        self.canvas.pack(pady=10)
+        self.draw_lanes()
+
+        self.score_label = ctk.CTkLabel(self, text="Счёт: 0   Комбо: 0", font=("Segoe UI", 14), text_color=("#000000", "#cdd6f4"))
+        self.score_label.pack()
+
+        self.start_btn = ctk.CTkButton(self, text="Старт", command=self.start_game)
+        self.start_btn.pack(pady=10)
+
+        self.bind("<KeyPress>", self.key_press)
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
+
+    def draw_lanes(self):
+        self.canvas.delete("all")
+        for i in range(self.lanes):
+            x = self.start_x + i * self.lane_width
+            self.canvas.create_rectangle(x, 0, x + self.lane_width, 250, outline="#585b70", width=2)
+            key = ["A", "S", "D"][i]
+            self.canvas.create_text(x + self.lane_width//2, 230, text=key, fill="#89b4fa", font=("Arial", 20, "bold"))
+
+    def play_music(self):
+        if not pygame_available or not self.music_file:
+            return
+        try:
+            pygame.mixer.music.load(self.music_file)
+            pygame.mixer.music.play(-1)  # зациклить
+        except Exception as e:
+            print("Не удалось загрузить музыку:", e)
+
+    def start_game(self):
+        if self.game_active:
+            return
+        self.game_active = True
+        self.score = 0
+        self.combo = 0
+        self.missed = 0
+        self.notes.clear()
+        self.note_data.clear()
+        self.canvas.delete("note")
+
+        # Синхронизация с BPM
+        quarter_ms = 60000 / self.bpm
+        self.spawn_delay = int(quarter_ms)
+        frames = quarter_ms / 30
+        self.note_speed = 200 / frames
+
+        self.play_music()
+        self.spawn_note()
+        self.update_loop()
+        self.start_btn.configure(state="disabled")
+
+    def spawn_note(self):
+        if not self.game_active:
+            return
+        lane = random.randint(0, self.lanes-1)
+        x = self.start_x + lane * self.lane_width + self.lane_width//2
+        y = 0
+        note_id = self.canvas.create_rectangle(x-20, y-20, x+20, y+20, fill="#f9e2af", tags="note")
+        self.notes.append(note_id)
+        self.note_data.append([lane, self.note_speed, 0, True])
+        self.after(self.spawn_delay, self.spawn_note)
+
+    def update_loop(self):
+        if not self.game_active:
+            return
+        to_remove = []
+        for i, data in enumerate(self.note_data):
+            if not data[3]:
+                continue
+            data[2] += data[1]
+            y = data[2]
+            note_id = self.notes[i]
+            self.canvas.coords(note_id, self.start_x + data[0]*self.lane_width + self.lane_width//2 - 20, y-20,
+                               self.start_x + data[0]*self.lane_width + self.lane_width//2 + 20, y+20)
+            if y > 260:
+                self.missed += 1
+                self.combo = 0
+                data[3] = False
+                self.canvas.delete(note_id)
+                to_remove.append(i)
+
+        for idx in reversed(to_remove):
+            del self.notes[idx]
+            del self.note_data[idx]
+
+        self.update_score_label()
+        self.after(30, self.update_loop)
+
+    def key_press(self, event):
+        if not self.game_active:
+            return
+        key = event.keysym.upper()
+        lane_map = {'A': 0, 'S': 1, 'D': 2}
+        if key not in lane_map:
+            return
+        lane = lane_map[key]
+        best_idx = -1
+        best_dist = 999
+        for i, data in enumerate(self.note_data):
+            if data[3] and data[0] == lane:
+                dist = abs(data[2] - 200)
+                if dist < best_dist and 180 <= data[2] <= 230:
+                    best_dist = dist
+                    best_idx = i
+        if best_idx != -1:
+            self.canvas.delete(self.notes[best_idx])
+            del self.notes[best_idx]
+            del self.note_data[best_idx]
+            self.score += 100
+            self.combo += 1
+        else:
+            self.missed += 1
+            self.combo = 0
+        self.update_score_label()
+
+    def update_score_label(self):
+        self.score_label.configure(text=f"Счёт: {self.score}   Комбо: {self.combo}   Промахи: {self.missed}")
+
+    def on_close(self):
+        self.game_active = False
+        if pygame_available and pygame.mixer.get_init():
+            pygame.mixer.music.stop()
+            pygame.mixer.quit()
+        self.destroy()
+
 # -------------------- Основное приложение --------------------
 class SystemOptimizer(CTk):
     def __init__(self):
         super().__init__()
+        self.config = load_config()
+        ctk.set_appearance_mode(self.config["theme"])
+
+        self.withdraw()
         self.title(" ")
         self.geometry("1050x800")
         self.minsize(900, 600)
-        ctk.set_appearance_mode("dark")
-        ctk.set_default_color_theme("dark-blue")
 
         self.overrideredirect(True)
+        try:
+            self.iconbitmap(default="icon.ico")
+        except:
+            pass
+        self.after(100, self._fix_taskbar)
+
         self.queue = queue.Queue()
         self.admin = is_admin()
 
-        # Кастомный заголовок (строго сверху)
-        self.title_bar = CTkFrame(self, height=36, fg_color="#0d1117", corner_radius=0)
+        # Кастомный заголовок (тёмный в обеих темах, чтобы не терять видимость)
+        title_bar_fg = ("#2b2b2b", "#0d1117")
+        title_text_color = ("#000000", "#c9d1d9")
+        self.title_bar = CTkFrame(self, height=36, fg_color=title_bar_fg, corner_radius=0)
         self.title_bar.pack(fill="x", side="top")
         self.title_bar.pack_propagate(False)
 
-        title_label = CTkLabel(self.title_bar, text="  System Optimizer", font=("Segoe UI", 12, "bold"), text_color="#c9d1d9")
+        title_label = CTkLabel(self.title_bar, text="  System Optimizer", font=("Segoe UI", 12, "bold"),
+                               text_color=title_text_color)
         title_label.pack(side="left", padx=10)
 
         btn_frame = CTkFrame(self.title_bar, fg_color="transparent")
         btn_frame.pack(side="right")
+
+        self.btn_donate = CTkButton(btn_frame, text="❤️ Поддержать", width=100, height=28,
+                                    fg_color="transparent", hover_color="#30363d",
+                                    font=("Segoe UI", 11), text_color="#f85149",
+                                    command=self.open_donate)
+        self.btn_donate.pack(side="left", padx=4)
 
         self.btn_min = CTkButton(btn_frame, text="─", width=36, height=28, fg_color="transparent",
                                  hover_color="#30363d", command=self.iconify)
@@ -456,24 +663,44 @@ class SystemOptimizer(CTk):
         title_label.bind("<B1-Motion>", self.do_move)
 
         # Основной контейнер
-        self.bg = CTkFrame(self, fg_color="#0d1117")
+        self.bg = CTkFrame(self, fg_color=("#f0f0f0", "#0d1117"))
         self.bg.pack(fill="both", expand=True)
 
-        self.tabs = CTkTabview(self.bg, corner_radius=10, fg_color="#161b22")
+        self.tabs = CTkTabview(self.bg, corner_radius=10, fg_color=("#ffffff", "#161b22"))
         self.tabs.pack(fill="both", expand=True, padx=10, pady=(0,10))
         self.tab_mon = self.tabs.add("Мониторинг")
         self.tab_opt = self.tabs.add("Оптимизация")
         self.tab_diag = self.tabs.add("Диагностика")
+        self.tab_settings = self.tabs.add("Настройки")
 
         self.build_monitor()
         self.build_optimizer()
         self.build_diagnostics()
+        self.build_settings()
 
         self.after(100, self.process_queue)
         self.update_stats()
-        self.after(2500, self.schedule_update)
+        interval = self.config.get("update_interval", 2500)
+        self._update_job = self.after(interval, self.schedule_update)
 
         Splash(self)
+
+        if self.config.get("start_minimized", False):
+            self.iconify()
+
+    def _fix_taskbar(self):
+        try:
+            hwnd = ctypes.windll.user32.GetParent(self.winfo_id())
+            GWL_EXSTYLE = -20
+            WS_EX_APPWINDOW = 0x40000
+            WS_EX_TOOLWINDOW = 0x80
+            style = ctypes.windll.user32.GetWindowLongPtrW(hwnd, GWL_EXSTYLE)
+            style = style | WS_EX_APPWINDOW
+            style = style & ~WS_EX_TOOLWINDOW
+            ctypes.windll.user32.SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style)
+            ctypes.windll.user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, 0x0002 | 0x0001)
+        except Exception as e:
+            print("Не удалось настроить панель задач:", e)
 
     def start_move(self, event):
         self.x = event.x
@@ -498,11 +725,16 @@ class SystemOptimizer(CTk):
             self.state('normal')
             self.btn_max.configure(text="☐")
 
+    # ---------- Вкладка Мониторинг ----------
     def build_monitor(self):
         scroll = CTkScrollableFrame(self.tab_mon, fg_color="transparent")
         scroll.pack(fill="both", expand=True, padx=5, pady=5)
 
-        cpu = CTkFrame(scroll, corner_radius=10, fg_color="#161b22")
+        card_fg = ("#ffffff", "#161b22")
+        def make_card(parent):
+            return CTkFrame(parent, corner_radius=10, fg_color=card_fg)
+
+        cpu = make_card(scroll)
         cpu.pack(fill="x", pady=5, padx=5)
         ctk.CTkLabel(cpu, text="🧠 Процессор (CPU)", font=("Segoe UI", 16, "bold"), text_color="#58a6ff").grid(row=0, column=0, columnspan=2, sticky="w", padx=10, pady=(10,0))
         self.cpu_usage = ctk.CTkLabel(cpu, text="Загрузка: --%", font=("Segoe UI", 14))
@@ -515,7 +747,7 @@ class SystemOptimizer(CTk):
         self.proc_count = ctk.CTkLabel(cpu, text="Процессов: --", font=("Segoe UI", 14))
         self.proc_count.grid(row=4, column=0, sticky="w", padx=20, pady=(0,10))
 
-        gpu = CTkFrame(scroll, corner_radius=10, fg_color="#161b22")
+        gpu = make_card(scroll)
         gpu.pack(fill="x", pady=5, padx=5)
         ctk.CTkLabel(gpu, text="🎮 Видеокарта (GPU)", font=("Segoe UI", 16, "bold"), text_color="#58a6ff").grid(row=0, column=0, columnspan=2, sticky="w", padx=10, pady=(10,0))
         self.gpu_load = ctk.CTkLabel(gpu, text="Загрузка: --%", font=("Segoe UI", 14))
@@ -525,22 +757,23 @@ class SystemOptimizer(CTk):
         self.gpu_temp = ctk.CTkLabel(gpu, text="Температура: --°C", font=("Segoe UI", 14))
         self.gpu_temp.grid(row=3, column=0, sticky="w", padx=20, pady=(0,10))
 
-        ram = CTkFrame(scroll, corner_radius=10, fg_color="#161b22")
+        ram = make_card(scroll)
         ram.pack(fill="x", pady=5, padx=5)
         ctk.CTkLabel(ram, text="🧮 Оперативная память", font=("Segoe UI", 16, "bold"), text_color="#58a6ff").grid(row=0, column=0, columnspan=2, sticky="w", padx=10, pady=(10,0))
         self.ram_usage_label = ctk.CTkLabel(ram, text="Загрузка: --%", font=("Segoe UI", 14))
         self.ram_usage_label.grid(row=1, column=0, sticky="w", padx=20)
-        self.ram_info_label = ctk.CTkLabel(ram, text="", font=("Segoe UI", 13), text_color="#8b949e")
+        self.ram_info_label = ctk.CTkLabel(ram, text="", font=("Segoe UI", 13), text_color=("#000000", "#8b949e"))
         self.ram_info_label.grid(row=2, column=0, sticky="w", padx=20, pady=(0,10))
 
-        disk = CTkFrame(scroll, corner_radius=10, fg_color="#161b22")
+        disk = make_card(scroll)
         disk.pack(fill="x", pady=5, padx=5)
         ctk.CTkLabel(disk, text="💾 Диски", font=("Segoe UI", 16, "bold"), text_color="#58a6ff").pack(anchor="w", padx=10, pady=(10,0))
-        self.disk_text = CTkTextbox(disk, height=150, font=("Consolas", 12), fg_color="#0d1117", text_color="#c9d1d9")
+        self.disk_text = CTkTextbox(disk, height=150, font=("Consolas", 12), fg_color=("#ffffff", "#0d1117"), text_color=("#000000", "#c9d1d9"))
         self.disk_text.pack(fill="x", padx=10, pady=10)
 
+    # ---------- Вкладка Оптимизация ----------
     def build_optimizer(self):
-        self.opt_frame = CTkFrame(self.tab_opt, corner_radius=10, fg_color="#161b22")
+        self.opt_frame = CTkFrame(self.tab_opt, corner_radius=10, fg_color=("#ffffff", "#161b22"))
         self.opt_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
         ctk.CTkLabel(self.opt_frame, text="🛠️ Глубокая оптимизация", font=("Segoe UI", 18, "bold"), text_color="#58a6ff").pack(pady=10)
@@ -557,12 +790,12 @@ class SystemOptimizer(CTk):
                                  fg_color="#238636", hover_color="#2ea043", command=self.start_opt)
         self.opt_btn.pack(pady=15)
 
-        self.progress = CTkProgressBar(self.opt_frame, width=400, fg_color="#0d1117", progress_color="#3fb950")
+        self.progress = CTkProgressBar(self.opt_frame, width=400, fg_color=("#e0e0e0", "#0d1117"), progress_color="#3fb950")
         self.progress.pack(pady=10)
         self.progress.set(0)
 
         self.log_box = CTkTextbox(self.opt_frame, height=14, font=("Courier New", 12),
-                                  fg_color="#0d1117", text_color="#c9d1d9")
+                                  fg_color=("#ffffff", "#0d1117"), text_color=("#000000", "#c9d1d9"))
         self.log_box.pack(fill="both", expand=True, padx=10, pady=5)
 
     def restart_as_admin(self):
@@ -571,11 +804,14 @@ class SystemOptimizer(CTk):
         except: pass
         self.destroy()
 
+    def open_donate(self):
+        webbrowser.open("https://www.donationalerts.com/r/mr_gleyg")
+
     def start_opt(self):
         self.opt_btn.configure(state="disabled")
         self.log_box.delete("1.0", "end")
         self.progress.set(0)
-        self.log_box.configure(fg_color="#000000", text_color="#00ff00")
+        self.log_box.configure(fg_color=("#000000", "#000000"), text_color="#00ff00")
         self.log(">>> Инициализация ядра...")
         self.after(100, self.run_optimization)
 
@@ -599,20 +835,21 @@ class SystemOptimizer(CTk):
         self.log_box.insert("end", f"{msg}\n")
         self.log_box.see("end")
 
+    # ---------- Вкладка Диагностика ----------
     def build_diagnostics(self):
-        diag_frame = CTkFrame(self.tab_diag, corner_radius=10, fg_color="#161b22")
+        diag_frame = CTkFrame(self.tab_diag, corner_radius=10, fg_color=("#ffffff", "#161b22"))
         diag_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
         ctk.CTkLabel(diag_frame, text="🔍 Диагностика системы", font=("Segoe UI", 18, "bold"), text_color="#58a6ff").pack(pady=10)
         ctk.CTkLabel(diag_frame, text="Анализ текущего состояния и рекомендации по улучшению",
-                     font=("Segoe UI", 12), text_color="#8b949e").pack()
+                     font=("Segoe UI", 12), text_color=("#000000", "#8b949e")).pack()
 
         self.diag_btn = CTkButton(diag_frame, text="Запустить диагностику", font=("Segoe UI", 14, "bold"),
                                   fg_color="#238636", hover_color="#2ea043", command=self.start_diag)
         self.diag_btn.pack(pady=15)
 
         self.diag_text = CTkTextbox(diag_frame, height=20, font=("Segoe UI", 13),
-                                    fg_color="#0d1117", text_color="#c9d1d9", wrap="word")
+                                    fg_color=("#ffffff", "#0d1117"), text_color=("#000000", "#c9d1d9"), wrap="word")
         self.diag_text.pack(fill="both", expand=True, padx=10, pady=10)
 
     def start_diag(self):
@@ -633,6 +870,119 @@ class SystemOptimizer(CTk):
             self.diag_text.insert("end", f"{tip}\n\n")
         self.diag_btn.configure(state="normal")
 
+    # ---------- Вкладка Настройки ----------
+    def build_settings(self):
+        settings_scroll = CTkScrollableFrame(self.tab_settings, fg_color="transparent")
+        settings_scroll.pack(fill="both", expand=True, padx=5, pady=5)
+
+        ctk.CTkLabel(settings_scroll, text="⚙️ Настройки", font=("Segoe UI", 18, "bold"), text_color="#58a6ff").pack(pady=10)
+
+        card_fg = ("#ffffff", "#161b22")
+        def make_setting_card(parent):
+            return CTkFrame(parent, corner_radius=10, fg_color=card_fg)
+
+        theme_frame = make_setting_card(settings_scroll)
+        theme_frame.pack(fill="x", pady=5, padx=5)
+        ctk.CTkLabel(theme_frame, text="🎨 Тема оформления", font=("Segoe UI", 14, "bold")).grid(row=0, column=0, sticky="w", padx=10, pady=(10,5))
+
+        self.theme_var = ctk.StringVar(value=self.config["theme"])
+        self.theme_switch = ctk.CTkSwitch(theme_frame, text="Тёмная / Светлая",
+                                          variable=self.theme_var, onvalue="dark", offvalue="light",
+                                          command=self.change_theme)
+        self.theme_switch.grid(row=1, column=0, sticky="w", padx=20, pady=(0,10))
+        if self.config["theme"] == "dark":
+            self.theme_switch.select()
+        else:
+            self.theme_switch.deselect()
+
+        autostart_frame = make_setting_card(settings_scroll)
+        autostart_frame.pack(fill="x", pady=5, padx=5)
+        ctk.CTkLabel(autostart_frame, text="🚀 Автозапуск", font=("Segoe UI", 14, "bold")).grid(row=0, column=0, sticky="w", padx=10, pady=(10,5))
+
+        self.autostart_var = ctk.BooleanVar(value=self.config["autostart"])
+        self.autostart_switch = ctk.CTkSwitch(autostart_frame, text="Запускать при старте Windows",
+                                              variable=self.autostart_var, command=self.toggle_autostart)
+        self.autostart_switch.grid(row=1, column=0, sticky="w", padx=20, pady=(0,10))
+
+        interval_frame = make_setting_card(settings_scroll)
+        interval_frame.pack(fill="x", pady=5, padx=5)
+        ctk.CTkLabel(interval_frame, text="⏱️ Интервал мониторинга (сек)", font=("Segoe UI", 14, "bold")).grid(row=0, column=0, sticky="w", padx=10, pady=(10,5))
+
+        self.interval_var = ctk.StringVar(value=str(self.config["update_interval"] // 1000))
+        interval_menu = ctk.CTkOptionMenu(interval_frame, values=["1", "2", "5"],
+                                          variable=self.interval_var, command=self.change_interval)
+        interval_menu.grid(row=1, column=0, sticky="w", padx=20, pady=(0,10))
+
+        tray_frame = make_setting_card(settings_scroll)
+        tray_frame.pack(fill="x", pady=5, padx=5)
+        self.start_minimized_var = ctk.BooleanVar(value=self.config.get("start_minimized", False))
+        self.tray_switch = ctk.CTkSwitch(tray_frame, text="Запускать свёрнутым в трей",
+                                         variable=self.start_minimized_var, command=self.toggle_start_minimized)
+        self.tray_switch.pack(anchor="w", padx=20, pady=10)
+
+        anim_frame = make_setting_card(settings_scroll)
+        anim_frame.pack(fill="x", pady=5, padx=5)
+        self.animations_var = ctk.BooleanVar(value=self.config.get("animations", True))
+        self.anim_switch = ctk.CTkSwitch(anim_frame, text="Анимации интерфейса",
+                                         variable=self.animations_var, command=self.toggle_animations)
+        self.anim_switch.pack(anchor="w", padx=20, pady=10)
+
+        secret_frame = make_setting_card(settings_scroll)
+        secret_frame.pack(fill="x", pady=20, padx=5)
+        ctk.CTkLabel(secret_frame, text="🔒 Совершенно секретно", font=("Segoe UI", 12), text_color=("#000000", "#8b949e")).pack(pady=(10,0))
+
+        self.secret_btn = ctk.CTkButton(secret_frame, text="Открыть",
+                                        fg_color="#cba6f7", hover_color="#b4befe",
+                                        text_color="#1e1e2e", font=("Segoe UI", 14, "bold"),
+                                        command=self.open_rhythm_game)
+        self.secret_btn.pack(pady=10)
+
+    def change_theme(self, *args):
+        theme = self.theme_var.get()
+        ctk.set_appearance_mode(theme)
+        self.config["theme"] = theme
+        save_config(self.config)
+
+    def change_interval(self, choice):
+        seconds = int(choice)
+        self.config["update_interval"] = seconds * 1000
+        save_config(self.config)
+        if hasattr(self, '_update_job'):
+            self.after_cancel(self._update_job)
+        self.schedule_update()
+
+    def toggle_autostart(self):
+        enabled = self.autostart_var.get()
+        self.config["autostart"] = enabled
+        save_config(self.config)
+        try:
+            import winreg
+            key = r"Software\Microsoft\Windows\CurrentVersion\Run"
+            reg = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key, 0, winreg.KEY_SET_VALUE)
+            if enabled:
+                exe_path = sys.executable if getattr(sys, 'frozen', False) else os.path.abspath(sys.argv[0])
+                winreg.SetValueEx(reg, "SystemOptimizer", 0, winreg.REG_SZ, exe_path)
+            else:
+                try:
+                    winreg.DeleteValue(reg, "SystemOptimizer")
+                except FileNotFoundError:
+                    pass
+            winreg.CloseKey(reg)
+        except Exception as e:
+            print("Ошибка автозагрузки:", e)
+
+    def toggle_start_minimized(self):
+        self.config["start_minimized"] = self.start_minimized_var.get()
+        save_config(self.config)
+
+    def toggle_animations(self):
+        self.config["animations"] = self.animations_var.get()
+        save_config(self.config)
+
+    def open_rhythm_game(self):
+        RhythmGame(self)
+
+    # ---------- Очередь сообщений ----------
     def process_queue(self):
         try:
             while True:
@@ -642,7 +992,7 @@ class SystemOptimizer(CTk):
                 elif msg[0] == "log":
                     self.log(msg[1])
                 elif msg[0] == "finish":
-                    self.log_box.configure(fg_color="#0d1117", text_color="#c9d1d9")
+                    self.log_box.configure(fg_color=("#ffffff", "#0d1117"), text_color=("#000000", "#c9d1d9"))
                     self.opt_btn.configure(state="normal")
                     self.log("[✔] Оптимизация завершена.")
                 elif msg[0] == "update_stats":
@@ -656,7 +1006,8 @@ class SystemOptimizer(CTk):
 
     def schedule_update(self):
         self.update_stats()
-        self.after(2500, self.schedule_update)
+        interval = self.config.get("update_interval", 2500)
+        self._update_job = self.after(interval, self.schedule_update)
 
     def update_stats(self):
         def worker():

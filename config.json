@@ -1,0 +1,7 @@
+{
+    "theme": "dark",
+    "autostart": false,
+    "update_interval": 1000,
+    "start_minimized": false,
+    "animations": true
+}
