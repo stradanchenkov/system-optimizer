@@ -1,0 +1,34 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'   # Запускать при пуше тега вида v1.0, v2.3 и т.д.
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write   # Разрешить создавать релизы
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Установка Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Установка зависимостей
+        run: pip install customtkinter psutil wmi pynvml send2trash pyinstaller
+
+      - name: Сборка в EXE
+        run: pyinstaller --onefile --windowed --uac-admin --collect-data customtkinter --name SystemOptimizer init.py
+
+      - name: Создание релиза и загрузка файла
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/SystemOptimizer.exe
+          prerelease: true   # по желанию, можно true для пререлиза
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

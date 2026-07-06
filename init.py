@@ -1,7 +1,7 @@
 import sys, os, time, threading, queue, subprocess, tempfile, ctypes, random
 from pathlib import Path
 
-# -------------------- Проверка ОС --------------------
+# Проверка ОС
 if sys.platform != 'win32':
     ctypes.windll.user32.MessageBoxW(0, "Только Windows 10/11", "Ошибка", 0x10)
     sys.exit(1)
@@ -11,19 +11,18 @@ if not (win_ver.major == 10 and win_ver.minor == 0):
     ctypes.windll.user32.MessageBoxW(0, "Требуется Windows 10 или 11", "Ошибка", 0x10)
     sys.exit(1)
 
-is_win11 = win_ver.build >= 22000
-OS_NAME = "Windows 11" if is_win11 else "Windows 10"
+IS_WIN11 = win_ver.build >= 22000
+OS_NAME = "Windows 11" if IS_WIN11 else "Windows 10"
 
 import customtkinter as ctk
-from customtkinter import (CTk, CTkFrame, CTkLabel, CTkButton,
-                          CTkProgressBar, CTkTextbox, CTkScrollableFrame, CTkTabview)
+from customtkinter import CTk, CTkFrame, CTkLabel, CTkButton, CTkProgressBar, CTkTextbox, CTkScrollableFrame, CTkTabview
 import psutil
 
-# -------------------- Библиотеки --------------------
 def is_admin():
     try: return ctypes.windll.shell32.IsUserAnAdmin()
     except: return False
 
+# Импорт доп. библиотек
 wmi_available = False
 try:
     import wmi
@@ -88,7 +87,6 @@ def get_gpu_info():
         return None
 
 def get_memory_modules():
-    """Возвращает список (size_gb, speed, locator) или пустой"""
     mods = []
     if wmi_available:
         try:
@@ -101,7 +99,6 @@ def get_memory_modules():
     return mods
 
 def get_disk_info():
-    """Собирает данные по логическим дискам (буквам): заполненность, нагрузка, скорость"""
     disks = []
     partitions = psutil.disk_partitions()
     logical = {}
@@ -134,16 +131,57 @@ def get_disk_info():
     return disks
 
 def get_mem_speed():
-    """Возвращает скорость ОЗУ (из первой планки) или 0"""
     mods = get_memory_modules()
     return mods[0][1] if mods else 0
 
 def get_process_count():
     return len(psutil.pids())
 
-# -------------------- Оптимизация --------------------
+# -------------------- Диагностика --------------------
+def run_diagnostics():
+    tips = []
+    cpu_percent = psutil.cpu_percent(interval=0.5)
+    if cpu_percent > 80:
+        tips.append(f"⚠️ Высокая загрузка CPU ({cpu_percent:.0f}%). Закройте тяжёлые фоновые приложения.")
+
+    mem = psutil.virtual_memory()
+    if mem.percent > 85:
+        tips.append(f"⚠️ Мало свободной памяти ({mem.percent}%). Добавьте ОЗУ или закройте программы.")
+    elif mem.available < 1_000_000_000:
+        tips.append("💡 Осталось <1 ГБ свободной RAM. Рекомендуется закрыть часть приложений или добавить память.")
+
+    for part in psutil.disk_partitions():
+        if 'fixed' not in part.opts: continue
+        try:
+            usage = psutil.disk_usage(part.mountpoint)
+            if usage.percent > 90:
+                tips.append(f"⚠️ Диск {part.device} заполнен на {usage.percent}%. Очистите место.")
+        except: pass
+
+    try:
+        temps = psutil.sensors_temperatures()
+        for key in ['coretemp', 'cpu-thermal', 'acpitz']:
+            if key in temps:
+                for entry in temps[key]:
+                    if 'Package' in entry.label or 'CPU' in entry.label:
+                        if entry.current > 80:
+                            tips.append(f"🔥 Температура CPU {entry.current}°C! Очистите систему охлаждения.")
+                        elif entry.current > 65:
+                            tips.append(f"🌡️ Температура CPU {entry.current}°C – выше нормы. Проверьте вентиляцию.")
+                        break
+    except: pass
+
+    net = psutil.net_io_counters()
+    if net.bytes_sent == 0 and net.bytes_recv == 0:
+        tips.append("🌐 Сетевая активность не обнаружена. Проверьте подключение к интернету.")
+
+    if not tips:
+        tips.append("✅ Система работает нормально. Особых проблем не выявлено.")
+    return tips
+
+# -------------------- Расширенная оптимизация --------------------
 def optimize_step(progress, log, admin):
-    total = 20 if admin else 12
+    total = 27 if admin else 16   # увеличим из-за новых шагов
     cur = 0
     def update(msg):
         nonlocal cur
@@ -155,6 +193,7 @@ def optimize_step(progress, log, admin):
         update("[*] Сканирование системы...")
         time.sleep(0.3)
 
+        # Базовая очистка
         update("[+] Очистка временных файлов пользователя")
         tmp = Path(os.environ.get('TEMP', tempfile.gettempdir()))
         cnt = 0
@@ -220,7 +259,7 @@ def optimize_step(progress, log, admin):
             update("[!] Оптимизация завершена (часть шагов пропущена без прав администратора)")
             return
 
-        # Только для администратора
+        # ---------- Шаги для администратора ----------
         update("[+] Очистка Prefetch")
         try:
             prefetch = Path(os.environ['SystemRoot'])/'Prefetch'
@@ -237,27 +276,21 @@ def optimize_step(progress, log, admin):
         log("  └ Сетевые стеки сброшены")
 
         update("[*] Настройка TCP/IP для низкого пинга")
-        try:
-            subprocess.run('netsh int tcp set global rss=enabled', shell=True, capture_output=True)
-            subprocess.run('netsh int tcp set global chimney=enabled', shell=True, capture_output=True)
-            subprocess.run('netsh int tcp set global autotuninglevel=normal', shell=True, capture_output=True)
-            log("  └ TCP/IP оптимизирован (RSS, Chimney, autotuning)")
-        except: log("  └ Ошибка настройки TCP")
+        subprocess.run('netsh int tcp set global rss=enabled', shell=True, capture_output=True)
+        subprocess.run('netsh int tcp set global chimney=enabled', shell=True, capture_output=True)
+        subprocess.run('netsh int tcp set global autotuninglevel=normal', shell=True, capture_output=True)
+        log("  └ TCP/IP оптимизирован (RSS, Chimney, autotuning)")
 
-        update("[*] Схема питания: Высокая производительность")
-        try:
-            subprocess.run('powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c', shell=True, capture_output=True)
-            log("  └ Схема питания установлена")
-        except: log("  └ Не удалось сменить схему питания")
+        update("[*] Установка схемы высокой производительности")
+        subprocess.run('powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c', shell=True, capture_output=True)
+        log("  └ Схема питания: Высокая производительность")
 
-        update("[*] Остановка тяжёлых служб (SysMain, WSearch)")
+        update("[*] Отключение SysMain и WSearch")
         for svc in ['SysMain', 'WSearch']:
-            try:
-                subprocess.run(f'net stop {svc} /y', shell=True, capture_output=True)
-                log(f"  └ Служба {svc} остановлена")
-            except: pass
+            subprocess.run(f'net stop {svc} /y', shell=True, capture_output=True)
+        log("  └ Службы SysMain и WSearch остановлены")
 
-        update("[*] Завершение фоновых процессов (браузеры, мессенджеры)")
+        update("[+] Завершение фоновых процессов (браузеры, мессенджеры)")
         killed = 0
         targets = ['chrome.exe','firefox.exe','msedge.exe','discord.exe','skype.exe','telegram.exe','onedrive.exe']
         for proc in psutil.process_iter(['name']):
@@ -266,47 +299,91 @@ def optimize_step(progress, log, admin):
                 except: pass
         log(f"  └ Завершено {killed} фоновых процессов")
 
-        update("[*] Очистка кэша Windows Store")
-        try:
-            subprocess.run('wsreset.exe /s', shell=True, capture_output=True)
-            log("  └ Кэш Store очищен")
-        except: log("  └ Не удалось очистить кэш Store")
+        update("[+] Очистка кэша Windows Store")
+        subprocess.run('wsreset.exe /s', shell=True, capture_output=True)
+        log("  └ Кэш Store очищен")
 
-        update("[*] TRIM для SSD")
-        try:
-            subprocess.run('fsutil behavior set DisableDeleteNotify 0', shell=True, capture_output=True)
-            for p in psutil.disk_partitions():
-                if 'fixed' in p.opts:
-                    try: subprocess.run(f'defrag {p.device} /L', shell=True, capture_output=True)
-                    except: pass
-            log("  └ TRIM выполнен для всех SSD")
-        except: log("  └ Ошибка TRIM")
+        update("[+] TRIM для SSD")
+        subprocess.run('fsutil behavior set DisableDeleteNotify 0', shell=True, capture_output=True)
+        for p in psutil.disk_partitions():
+            if 'fixed' in p.opts:
+                subprocess.run(f'defrag {p.device} /L', shell=True, capture_output=True)  # только TRIM, без обычной дефрагментации
+        log("  └ TRIM выполнен для всех SSD (дефрагментация HDD пропущена для скорости)")
 
-        update("[*] Проверка обновлений драйверов")
-        try:
-            subprocess.run('usoclient StartScan', shell=True, capture_output=True)
-            log("  └ Сканирование обновлений запущено")
-        except: log("  └ Не удалось запустить проверку обновлений")
+        # ------ ИГРОВАЯ ОПТИМИЗАЦИЯ ------
+        update("[*] Включение игрового режима (Game Mode)")
+        subprocess.run('reg add "HKCU\\Software\\Microsoft\\GameBar" /v AllowAutoGameMode /t REG_DWORD /d 1 /f', shell=True, capture_output=True)
+        subprocess.run('reg add "HKCU\\Software\\Microsoft\\GameBar" /v AutoGameModeEnabled /t REG_DWORD /d 1 /f', shell=True, capture_output=True)
+        log("  └ Игровой режим активирован")
 
-        update("[*] Повышение приоритета для активных процессов")
+        update("[*] Отключение Xbox Game Bar (освобождение ресурсов)")
+        subprocess.run('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\GameDVR" /v AppCaptureEnabled /t REG_DWORD /d 0 /f', shell=True, capture_output=True)
+        subprocess.run('reg add "HKCU\\Software\\Microsoft\\GameBar" /v UseNexusForGameBarEnabled /t REG_DWORD /d 0 /f', shell=True, capture_output=True)
+        log("  └ Xbox Game Bar отключён")
+
+        update("[*] Настройка визуальных эффектов (макс. производительность)")
+        subprocess.run('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\VisualEffects" /v VisualFXSetting /t REG_DWORD /d 2 /f', shell=True, capture_output=True)
+        log("  └ Визуальные эффекты: максимальная производительность")
+
+        update("[*] Очистка кэша DirectX (Shader Cache)")
+        dx_cache = Path(os.environ['LOCALAPPDATA'])/'NVIDIA'/'DXCache'
+        if dx_cache.exists():
+            for f in dx_cache.iterdir():
+                try: f.unlink(missing_ok=True)
+                except: pass
+        amd_cache = Path(os.environ['LOCALAPPDATA'])/'AMD'/'DxCache'
+        if amd_cache.exists():
+            for f in amd_cache.iterdir():
+                try: f.unlink(missing_ok=True)
+                except: pass
+        log("  └ Кэш шейдеров DirectX очищен")
+
+        update("[+] Повышение приоритетов процессов")
         try:
             for proc in psutil.process_iter(['pid', 'cpu_percent']):
                 if proc.info['cpu_percent'] > 20:
-                    try:
-                        h = ctypes.windll.kernel32.OpenProcess(0x0200, False, proc.info['pid'])
-                        if h:
-                            ctypes.windll.kernel32.SetPriorityClass(h, 0x00000080)  # HIGH_PRIORITY_CLASS
-                            ctypes.windll.kernel32.CloseHandle(h)
-                    except: pass
+                    h = ctypes.windll.kernel32.OpenProcess(0x0200, False, proc.info['pid'])
+                    if h:
+                        ctypes.windll.kernel32.SetPriorityClass(h, 0x00000080)
+                        ctypes.windll.kernel32.CloseHandle(h)
             log("  └ Приоритеты процессов повышены")
         except: log("  └ Ошибка изменения приоритетов")
+
+        # ------ ОПТИМИЗАЦИЯ ПОД КОНКРЕТНУЮ ОС ------
+        if IS_WIN11:
+            update("[*] Windows 11: Отключение виджетов и новостей")
+            subprocess.run('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Feeds" /v ShellFeedsTaskbarViewMode /t REG_DWORD /d 2 /f', shell=True, capture_output=True)
+            subprocess.run('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Widgets" /v EnableAppNotification /t REG_DWORD /d 0 /f', shell=True, capture_output=True)
+            log("  └ Виджеты и новости отключены")
+
+            update("[*] Windows 11: Отключение Copilot (если есть)")
+            subprocess.run('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Copilot" /v IsCopilotAvailable /t REG_DWORD /d 0 /f', shell=True, capture_output=True)
+            log("  └ Copilot отключён")
+        else:
+            update("[*] Windows 10: Отключение Cortana")
+            subprocess.run('reg add "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\Windows Search" /v AllowCortana /t REG_DWORD /d 0 /f', shell=True, capture_output=True)
+            log("  └ Cortana отключена")
+
+            update("[*] Windows 10: Отключение рекламы на экране блокировки и в меню Пуск")
+            subprocess.run('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager" /v RotatingLockScreenEnabled /t REG_DWORD /d 0 /f', shell=True, capture_output=True)
+            subprocess.run('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager" /v SystemPaneSuggestionsEnabled /t REG_DWORD /d 0 /f', shell=True, capture_output=True)
+            log("  └ Реклама и предложения отключены")
+
+        update("[*] Увеличение размера системного кэша")
+        subprocess.run('reg add "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Memory Management" /v LargeSystemCache /t REG_DWORD /d 1 /f', shell=True, capture_output=True)
+        log("  └ LargeSystemCache включён")
+
+        update("[*] Фиксация файла подкачки (4-8 ГБ)")
+        subprocess.run('wmic computersystem where name="%computername%" set AutomaticManagedPagefile=False', shell=True, capture_output=True)
+        subprocess.run('wmic pagefileset where name="C:\\\\pagefile.sys" set InitialSize=4096,MaximumSize=8192', shell=True, capture_output=True)
+        log("  └ Файл подкачки настроен (4-8 ГБ)")
 
         update("[✔] Глубокая оптимизация завершена")
     except Exception as e:
         log(f"[✘] Критическая ошибка: {e}")
         progress(100)
 
-# -------------------- Интерфейс --------------------
+# -------------------- Splash Screen --------------------
 class Splash(ctk.CTkToplevel):
     def __init__(self, master):
         super().__init__(master)
@@ -336,27 +413,61 @@ class Splash(ctk.CTkToplevel):
             self.master.deiconify()
             self.destroy()
 
+# -------------------- Основное приложение --------------------
 class SystemOptimizer(CTk):
     def __init__(self):
         super().__init__()
-        self.title(f"Оптимизатор системы - {OS_NAME}")
+        self.title(" ")
         self.geometry("1050x800")
         self.minsize(900, 600)
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("dark-blue")
-        self.withdraw()  # скрыто до конца сплеша
 
+        self.overrideredirect(True)
         self.queue = queue.Queue()
         self.admin = is_admin()
 
-        # Вкладки
-        self.tabs = CTkTabview(self, corner_radius=10)
-        self.tabs.pack(fill="both", expand=True, padx=10, pady=10)
+        # Кастомный заголовок (строго сверху)
+        self.title_bar = CTkFrame(self, height=36, fg_color="#0d1117", corner_radius=0)
+        self.title_bar.pack(fill="x", side="top")
+        self.title_bar.pack_propagate(False)
+
+        title_label = CTkLabel(self.title_bar, text="  System Optimizer", font=("Segoe UI", 12, "bold"), text_color="#c9d1d9")
+        title_label.pack(side="left", padx=10)
+
+        btn_frame = CTkFrame(self.title_bar, fg_color="transparent")
+        btn_frame.pack(side="right")
+
+        self.btn_min = CTkButton(btn_frame, text="─", width=36, height=28, fg_color="transparent",
+                                 hover_color="#30363d", command=self.iconify)
+        self.btn_min.pack(side="left", padx=2)
+        self.btn_max = CTkButton(btn_frame, text="☐", width=36, height=28, fg_color="transparent",
+                                 hover_color="#30363d", command=self.toggle_max)
+        self.btn_max.pack(side="left", padx=2)
+        self.btn_close = CTkButton(btn_frame, text="✕", width=36, height=28, fg_color="transparent",
+                                  hover_color="#da3633", command=self.destroy)
+        self.btn_close.pack(side="left", padx=2)
+
+        self.title_bar.bind("<Button-1>", self.start_move)
+        self.title_bar.bind("<ButtonRelease-1>", self.stop_move)
+        self.title_bar.bind("<B1-Motion>", self.do_move)
+        title_label.bind("<Button-1>", self.start_move)
+        title_label.bind("<ButtonRelease-1>", self.stop_move)
+        title_label.bind("<B1-Motion>", self.do_move)
+
+        # Основной контейнер
+        self.bg = CTkFrame(self, fg_color="#0d1117")
+        self.bg.pack(fill="both", expand=True)
+
+        self.tabs = CTkTabview(self.bg, corner_radius=10, fg_color="#161b22")
+        self.tabs.pack(fill="both", expand=True, padx=10, pady=(0,10))
         self.tab_mon = self.tabs.add("Мониторинг")
         self.tab_opt = self.tabs.add("Оптимизация")
+        self.tab_diag = self.tabs.add("Диагностика")
 
         self.build_monitor()
         self.build_optimizer()
+        self.build_diagnostics()
 
         self.after(100, self.process_queue)
         self.update_stats()
@@ -364,12 +475,33 @@ class SystemOptimizer(CTk):
 
         Splash(self)
 
-    # ---------- Мониторинг ----------
+    def start_move(self, event):
+        self.x = event.x
+        self.y = event.y
+
+    def stop_move(self, event):
+        self.x = None
+        self.y = None
+
+    def do_move(self, event):
+        deltax = event.x - self.x
+        deltay = event.y - self.y
+        x = self.winfo_x() + deltax
+        y = self.winfo_y() + deltay
+        self.geometry(f"+{x}+{y}")
+
+    def toggle_max(self):
+        if self.state() == 'normal':
+            self.state('zoomed')
+            self.btn_max.configure(text="❐")
+        else:
+            self.state('normal')
+            self.btn_max.configure(text="☐")
+
     def build_monitor(self):
         scroll = CTkScrollableFrame(self.tab_mon, fg_color="transparent")
         scroll.pack(fill="both", expand=True, padx=5, pady=5)
 
-        # CPU
         cpu = CTkFrame(scroll, corner_radius=10, fg_color="#161b22")
         cpu.pack(fill="x", pady=5, padx=5)
         ctk.CTkLabel(cpu, text="🧠 Процессор (CPU)", font=("Segoe UI", 16, "bold"), text_color="#58a6ff").grid(row=0, column=0, columnspan=2, sticky="w", padx=10, pady=(10,0))
@@ -379,11 +511,10 @@ class SystemOptimizer(CTk):
         self.cpu_freq.grid(row=2, column=0, sticky="w", padx=20)
         self.cpu_temp_label = ctk.CTkLabel(cpu, text="Температура: --°C", font=("Segoe UI", 14))
         self.cpu_temp_label.grid(row=3, column=0, sticky="w", padx=20, pady=2)
-        self.cpu_temp_label.grid_remove()  # скрыта по умолчанию
+        self.cpu_temp_label.grid_remove()
         self.proc_count = ctk.CTkLabel(cpu, text="Процессов: --", font=("Segoe UI", 14))
         self.proc_count.grid(row=4, column=0, sticky="w", padx=20, pady=(0,10))
 
-        # GPU
         gpu = CTkFrame(scroll, corner_radius=10, fg_color="#161b22")
         gpu.pack(fill="x", pady=5, padx=5)
         ctk.CTkLabel(gpu, text="🎮 Видеокарта (GPU)", font=("Segoe UI", 16, "bold"), text_color="#58a6ff").grid(row=0, column=0, columnspan=2, sticky="w", padx=10, pady=(10,0))
@@ -394,7 +525,6 @@ class SystemOptimizer(CTk):
         self.gpu_temp = ctk.CTkLabel(gpu, text="Температура: --°C", font=("Segoe UI", 14))
         self.gpu_temp.grid(row=3, column=0, sticky="w", padx=20, pady=(0,10))
 
-        # RAM
         ram = CTkFrame(scroll, corner_radius=10, fg_color="#161b22")
         ram.pack(fill="x", pady=5, padx=5)
         ctk.CTkLabel(ram, text="🧮 Оперативная память", font=("Segoe UI", 16, "bold"), text_color="#58a6ff").grid(row=0, column=0, columnspan=2, sticky="w", padx=10, pady=(10,0))
@@ -403,41 +533,35 @@ class SystemOptimizer(CTk):
         self.ram_info_label = ctk.CTkLabel(ram, text="", font=("Segoe UI", 13), text_color="#8b949e")
         self.ram_info_label.grid(row=2, column=0, sticky="w", padx=20, pady=(0,10))
 
-        # Диски
         disk = CTkFrame(scroll, corner_radius=10, fg_color="#161b22")
         disk.pack(fill="x", pady=5, padx=5)
         ctk.CTkLabel(disk, text="💾 Диски", font=("Segoe UI", 16, "bold"), text_color="#58a6ff").pack(anchor="w", padx=10, pady=(10,0))
         self.disk_text = CTkTextbox(disk, height=150, font=("Consolas", 12), fg_color="#0d1117", text_color="#c9d1d9")
         self.disk_text.pack(fill="x", padx=10, pady=10)
 
-    # ---------- Оптимизация ----------
     def build_optimizer(self):
         self.opt_frame = CTkFrame(self.tab_opt, corner_radius=10, fg_color="#161b22")
         self.opt_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
         ctk.CTkLabel(self.opt_frame, text="🛠️ Глубокая оптимизация", font=("Segoe UI", 18, "bold"), text_color="#58a6ff").pack(pady=10)
-
-        # Права админа
         admin_txt = "✅ Права администратора" if self.admin else "⚠️ Без прав администратора (ограничено)"
         self.admin_lbl = ctk.CTkLabel(self.opt_frame, text=admin_txt, font=("Segoe UI", 12),
                                       text_color="#3fb950" if self.admin else "#f85149")
         self.admin_lbl.pack(pady=5)
-
         if not self.admin:
             self.elev_btn = CTkButton(self.opt_frame, text="🔒 Перезапустить от администратора",
-                                     command=self.restart_as_admin)
+                                      command=self.restart_as_admin)
             self.elev_btn.pack(pady=5)
 
         self.opt_btn = CTkButton(self.opt_frame, text="▶️ Начать оптимизацию", font=("Segoe UI", 14, "bold"),
-                                fg_color="#238636", hover_color="#2ea043", command=self.start_opt)
+                                 fg_color="#238636", hover_color="#2ea043", command=self.start_opt)
         self.opt_btn.pack(pady=15)
 
         self.progress = CTkProgressBar(self.opt_frame, width=400, fg_color="#0d1117", progress_color="#3fb950")
         self.progress.pack(pady=10)
         self.progress.set(0)
 
-        # Терминал в стиле хакера
-        self.log_box = CTkTextbox(self.opt_frame, height=16, font=("Courier New", 12),
+        self.log_box = CTkTextbox(self.opt_frame, height=14, font=("Courier New", 12),
                                   fg_color="#0d1117", text_color="#c9d1d9")
         self.log_box.pack(fill="both", expand=True, padx=10, pady=5)
 
@@ -451,7 +575,6 @@ class SystemOptimizer(CTk):
         self.opt_btn.configure(state="disabled")
         self.log_box.delete("1.0", "end")
         self.progress.set(0)
-        # Включаем хакерский режим
         self.log_box.configure(fg_color="#000000", text_color="#00ff00")
         self.log(">>> Инициализация ядра...")
         self.after(100, self.run_optimization)
@@ -464,7 +587,6 @@ class SystemOptimizer(CTk):
                 self.hacker_log(f"[!] Критический сбой: {e}")
             finally:
                 self.queue.put(("finish",))
-
         threading.Thread(target=worker, daemon=True).start()
 
     def hacker_log(self, msg):
@@ -477,6 +599,40 @@ class SystemOptimizer(CTk):
         self.log_box.insert("end", f"{msg}\n")
         self.log_box.see("end")
 
+    def build_diagnostics(self):
+        diag_frame = CTkFrame(self.tab_diag, corner_radius=10, fg_color="#161b22")
+        diag_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        ctk.CTkLabel(diag_frame, text="🔍 Диагностика системы", font=("Segoe UI", 18, "bold"), text_color="#58a6ff").pack(pady=10)
+        ctk.CTkLabel(diag_frame, text="Анализ текущего состояния и рекомендации по улучшению",
+                     font=("Segoe UI", 12), text_color="#8b949e").pack()
+
+        self.diag_btn = CTkButton(diag_frame, text="Запустить диагностику", font=("Segoe UI", 14, "bold"),
+                                  fg_color="#238636", hover_color="#2ea043", command=self.start_diag)
+        self.diag_btn.pack(pady=15)
+
+        self.diag_text = CTkTextbox(diag_frame, height=20, font=("Segoe UI", 13),
+                                    fg_color="#0d1117", text_color="#c9d1d9", wrap="word")
+        self.diag_text.pack(fill="both", expand=True, padx=10, pady=10)
+
+    def start_diag(self):
+        self.diag_btn.configure(state="disabled")
+        self.diag_text.delete("1.0", "end")
+        self.diag_text.insert("end", "Выполняется диагностика...\n\n")
+
+        def worker():
+            tips = run_diagnostics()
+            self.queue.put(("diag_done", tips))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def show_diagnostics(self, tips):
+        self.diag_text.delete("1.0", "end")
+        self.diag_text.insert("end", "=== Результаты диагностики ===\n\n")
+        for tip in tips:
+            self.diag_text.insert("end", f"{tip}\n\n")
+        self.diag_btn.configure(state="normal")
+
     def process_queue(self):
         try:
             while True:
@@ -488,9 +644,11 @@ class SystemOptimizer(CTk):
                 elif msg[0] == "finish":
                     self.log_box.configure(fg_color="#0d1117", text_color="#c9d1d9")
                     self.opt_btn.configure(state="normal")
-                    self.log("[✔] Оптимизация завершена. Можно безопасно закрыть.")
+                    self.log("[✔] Оптимизация завершена.")
                 elif msg[0] == "update_stats":
                     self.apply_stats(msg[1])
+                elif msg[0] == "diag_done":
+                    self.show_diagnostics(msg[1])
         except queue.Empty:
             pass
         finally:
@@ -512,13 +670,10 @@ class SystemOptimizer(CTk):
                 self.queue.put(("update_stats", (cpu_usage, cpu_freq, cpu_temp, gpu_info, mem, mem_speed, disks, procs)))
             except Exception as e:
                 print(f"Stats error: {e}")
-
         threading.Thread(target=worker, daemon=True).start()
 
     def apply_stats(self, data):
         cpu_usage, cpu_freq, cpu_temp, gpu_info, mem, mem_speed, disks, procs = data
-
-        # CPU
         self.cpu_usage.configure(text=f"Загрузка: {cpu_usage:.1f}%")
         self.cpu_freq.configure(text=f"Частота: {cpu_freq:.0f} МГц")
         if cpu_temp is not None:
@@ -528,7 +683,6 @@ class SystemOptimizer(CTk):
             self.cpu_temp_label.grid_remove()
         self.proc_count.configure(text=f"Процессов: {procs}")
 
-        # GPU
         if gpu_info:
             load, freq, temp = gpu_info
             self.gpu_load.configure(text=f"Загрузка: {load:.1f}%")
@@ -539,7 +693,6 @@ class SystemOptimizer(CTk):
             self.gpu_freq.configure(text="Частота: недоступно")
             self.gpu_temp.configure(text="Температура: недоступно")
 
-        # RAM
         used_gb = mem.used / (1024**3)
         total_gb = mem.total / (1024**3)
         self.ram_usage_label.configure(text=f"Загрузка: {mem.percent:.1f}%")
@@ -550,7 +703,6 @@ class SystemOptimizer(CTk):
             info += " | Скорость: неизвестна"
         self.ram_info_label.configure(text=info)
 
-        # Диски
         self.disk_text.delete("1.0", "end")
         if disks:
             for d in disks:
