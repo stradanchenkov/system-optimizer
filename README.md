@@ -17,7 +17,7 @@
 
 ## Установка
 Скачайте последний релиз (`SystemOptimizer.exe`) и запустите от имени администратора.
-## Скачать [ [здесь](https://github.com/stradanchenkov/system-optimizer/releases/tag/TestVersion) ]
+## Скачать [ [здесь](https://github.com/stradanchenkov/system-optimizer/releases/tag/v1.1) ]
 
 ## Сборка из исходников
 ```bash
