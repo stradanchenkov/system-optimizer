@@ -17,10 +17,10 @@
 
 ## Установка
 Скачайте последний релиз (`SystemOptimizer.exe`) и запустите от имени администратора.
+## Скачать [ [здесь](https://github.com/stradanchenkov/system-optimizer/releases/tag/TestVersion) ]
 
 ## Сборка из исходников
 ```bash
 pip install customtkinter psutil wmi nvidia-ml-py send2trash pyinstaller
 pyinstaller --onefile --windowed --uac-admin --collect-data customtkinter init.py
 ```
-##Скачать [ [здесь](https://github.com/stradanchenkov/system-optimizer/releases/tag/TestVersion) ]
